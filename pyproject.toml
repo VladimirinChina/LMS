@@ -10,7 +10,8 @@ dependencies = [
     "django (>=6.1.2,<7.0.0)",
     "djangorestframework (>=3.18.3,<4.0.0)",
     "pillow (>=13.0.0,<14.0.0)",
-    "djangorestframework-stubs (>=3.18.1,<4.0.0)"
+    "djangorestframework-stubs (>=3.18.1,<4.0.0)",
+    "django-filter (>=26.2,<27.0)"
 ]
 
 
@@ -52,6 +53,10 @@ namespace_packages = true
 check_untyped_defs = true
 ignore_missing_imports = true
 plugins = ["mypy_django_plugin.main", "mypy_drf_plugin.main"]
+
+[[tool.mypy.overrides]]
+module = ["django_filters.*"]
+ignore_missing_imports = true
 
 [tool.flake8]
 max-line-length = 119
