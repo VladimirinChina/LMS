@@ -7,6 +7,7 @@ class LessonSerializer(serializers.ModelSerializer):
     class Meta:
         model = Lesson
         fields = "__all__"
+        read_only_fields = ("owner",)
 
 
 class CourseSerializer(serializers.ModelSerializer):
@@ -16,6 +17,7 @@ class CourseSerializer(serializers.ModelSerializer):
     class Meta:
         model = Course
         fields = "__all__"
+        read_only_fields = ("owner",)
 
     def get_lessons_count(self, obj: Course) -> int:
         return obj.lessons.count()
