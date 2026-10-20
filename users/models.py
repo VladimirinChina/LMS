@@ -2,6 +2,7 @@ from typing import ClassVar
 
 from django.contrib.auth.models import AbstractBaseUser, PermissionsMixin
 from django.db import models
+from django.utils import timezone
 
 from .managers import UserManager
 
@@ -28,3 +29,47 @@ class User(AbstractBaseUser, PermissionsMixin):
 
     def __str__(self) -> str:
         return self.email
+
+
+class Payment(models.Model):
+    class Method(models.TextChoices):
+        CASH = "cash", "Наличные"
+        TRANSFER = "transfer", "Перевод на счёт"
+
+    user = models.ForeignKey(
+        User,
+        on_delete=models.CASCADE,
+        related_name="payments",
+        verbose_name="Пользователь",
+    )
+    paid_at = models.DateTimeField(default=timezone.now, verbose_name="Дата оплаты")
+    course = models.ForeignKey(
+        "materials.Course",
+        on_delete=models.SET_NULL,
+        blank=True,
+        null=True,
+        related_name="payments",
+        verbose_name="Оплаченный курс",
+    )
+    lesson = models.ForeignKey(
+        "materials.Lesson",
+        on_delete=models.SET_NULL,
+        blank=True,
+        null=True,
+        related_name="payments",
+        verbose_name="Оплаченный урок",
+    )
+    amount = models.DecimalField(max_digits=10, decimal_places=2, verbose_name="Сумма оплаты")
+    method = models.CharField(
+        max_length=20,
+        choices=Method.choices,
+        default=Method.TRANSFER,
+        verbose_name="Способ оплаты",
+    )
+
+    class Meta:
+        verbose_name = "Платёж"
+        verbose_name_plural = "Платежи"
+
+    def __str__(self) -> str:
+        return f"{self.user} — {self.amount} ({self.paid_at:%Y-%m-%d})"
