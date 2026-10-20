@@ -8,11 +8,7 @@ MODERS_GROUP = "moders"
 
 
 def is_moder(user: Any) -> bool:
-    return bool(
-        user
-        and user.is_authenticated
-        and user.groups.filter(name=MODERS_GROUP).exists()
-    )
+    return bool(user and user.is_authenticated and user.groups.filter(name=MODERS_GROUP).exists())
 
 
 class IsModer(BasePermission):
