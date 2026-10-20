@@ -33,31 +33,37 @@
    poetry install
 ```
 
-3. Применить миграции:
+3. Создать файл `.env` на основе `.env.example` и указать свой `SECRET_KEY`:
+
+```bash
+   cp .env.example .env
+```
+
+4. Применить миграции:
 
 ```bash
    poetry run python manage.py migrate
 ```
 
-4. Загрузить группу модераторов:
+5. Загрузить группу модераторов:
 
 ```bash
    poetry run python manage.py loaddata groups
 ```
 
-5. (Опционально) Заполнить таблицу платежей тестовыми данными:
+6. (Опционально) Заполнить таблицу платежей тестовыми данными:
 
 ```bash
    poetry run python manage.py fill_payments
 ```
 
-6. Создать суперпользователя (вход по email):
+7. Создать суперпользователя (вход по email):
 
 ```bash
    poetry run python manage.py createsuperuser
 ```
 
-7. Запустить сервер:
+8. Запустить сервер:
 
 ```bash
    poetry run python manage.py runserver
