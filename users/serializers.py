@@ -36,6 +36,12 @@ class UserSerializer(serializers.ModelSerializer):
         )
 
 
+class UserPublicSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = User
+        fields = ("id", "email", "first_name", "phone", "city", "avatar")
+
+
 class UserRegisterSerializer(serializers.ModelSerializer):
     password = serializers.CharField(
         write_only=True,
