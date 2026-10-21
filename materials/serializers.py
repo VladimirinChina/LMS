@@ -50,4 +50,3 @@ class CourseSerializer(serializers.ModelSerializer):
         if request is None or not request.user.is_authenticated:
             return False
         return obj.subscriptions.filter(user=request.user).exists()
-

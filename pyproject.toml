@@ -28,7 +28,8 @@ dev = [
     "mypy (>=2.4.0,<3.0.0)",
     "isort (>=9.0.2,<10.0.0)",
     "django-stubs (>=6.1.2,<7.0.0)",
-    "djangorestframework-stubs (>=3.18.1,<4.0.0)"
+    "djangorestframework-stubs (>=3.18.1,<4.0.0)",
+    "coverage (>=7.16.2,<8.0.0)"
 ]
 
 [tool.black]

@@ -25,6 +25,5 @@ def validate_no_external_links(value: str) -> None:
     for url in URL_PATTERN.findall(value or ""):
         if not _is_allowed(url):
             raise ValidationError(
-                f"В тексте найдена ссылка на сторонний ресурс ({url}). "
-                "Разрешены только ссылки на youtube.com"
+                f"В тексте найдена ссылка на сторонний ресурс ({url}). " "Разрешены только ссылки на youtube.com"
             )

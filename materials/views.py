@@ -1,7 +1,7 @@
-from typing import Any
+from typing import Any, cast
 
 from django.db.models import QuerySet
-from rest_framework import viewsets, status, generics
+from rest_framework import generics, status, viewsets
 from rest_framework.generics import get_object_or_404
 from rest_framework.permissions import BasePermission, IsAuthenticated
 from rest_framework.request import Request
@@ -9,6 +9,7 @@ from rest_framework.response import Response
 from rest_framework.serializers import BaseSerializer
 from rest_framework.views import APIView
 
+from users.models import User
 from users.permissions import IsModer, IsOwner, is_moder
 
 from .models import Course, Lesson, Subscription
@@ -87,7 +88,9 @@ class SubscriptionAPIView(APIView):
     permission_classes = [IsAuthenticated]
 
     def post(self, request: Request) -> Response:
-        course_id = request.data.get("course")
+        user = cast(User, request.user)
+        data = request.data
+        course_id = data.get("course") if isinstance(data, dict) else None
         if course_id is None:
             return Response(
                 {"error": "Не указан id курса (поле course)"},
@@ -95,13 +98,13 @@ class SubscriptionAPIView(APIView):
             )
 
         course = get_object_or_404(Course, pk=course_id)
-        subscription = Subscription.objects.filter(user=request.user, course=course)
+        subscription = Subscription.objects.filter(user=user, course=course)
 
         if subscription.exists():
             subscription.delete()
             message = "Подписка удалена"
         else:
-            Subscription.objects.create(user=request.user, course=course)
+            Subscription.objects.create(user=user, course=course)
             message = "Подписка добавлена"
 
         return Response({"message": message})
