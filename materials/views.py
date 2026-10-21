@@ -12,12 +12,14 @@ from rest_framework.views import APIView
 from users.permissions import IsModer, IsOwner, is_moder
 
 from .models import Course, Lesson, Subscription
+from .paginators import CoursePagination, LessonPagination
 from .serializers import CourseSerializer, LessonSerializer
 
 
 class CourseViewSet(viewsets.ModelViewSet):
-    queryset = Course.objects.all()
+    queryset = Course.objects.all().order_by("id")
     serializer_class = CourseSerializer
+    pagination_class = CoursePagination
 
     def get_queryset(self) -> QuerySet[Course]:
         queryset = super().get_queryset()
@@ -42,9 +44,10 @@ class CourseViewSet(viewsets.ModelViewSet):
 
 
 class LessonListAPIView(generics.ListAPIView):
-    queryset = Lesson.objects.all()
+    queryset = Lesson.objects.all().order_by("id")
     serializer_class = LessonSerializer
     permission_classes = [IsAuthenticated]
+    pagination_class = LessonPagination
 
     def get_queryset(self) -> QuerySet[Lesson]:
         queryset = super().get_queryset()
