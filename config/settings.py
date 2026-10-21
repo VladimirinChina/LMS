@@ -46,6 +46,7 @@ INSTALLED_APPS = [
     "users",
     "materials",
     "django_filters",
+    "rest_framework_simplejwt",
 ]
 
 AUTH_USER_MODEL = "users.User"

@@ -215,3 +215,95 @@ class CoursePaginationTestCase(BaseTestCase):
 
         response = self.client.get(url, {"page_size": 2})
         self.assertEqual(len(response.json()["results"]), 2)
+
+
+class CourseTestCase(BaseTestCase):
+    def test_create_course(self) -> None:
+        self.client.force_authenticate(user=self.owner)
+        data = {"title": "Новый курс", "description": "Описание"}
+        response = self.client.post(reverse("materials:courses-list"), data)
+
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        self.assertEqual(response.json()["owner"], self.owner.id)
+
+    def test_create_course_with_foreign_link(self) -> None:
+        self.client.force_authenticate(user=self.owner)
+        data = {"title": "Новый курс", "description": "Тут https://stepik.org"}
+        response = self.client.post(reverse("materials:courses-list"), data)
+
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn("description", response.json())
+
+    def test_create_course_by_moder_forbidden(self) -> None:
+        self.client.force_authenticate(user=self.moder)
+        response = self.client.post(reverse("materials:courses-list"), {"title": "Курс"})
+
+        self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
+
+    def test_create_course_unauthenticated(self) -> None:
+        response = self.client.post(reverse("materials:courses-list"), {"title": "Курс"})
+
+        self.assertEqual(response.status_code, status.HTTP_401_UNAUTHORIZED)
+
+    def test_list_courses_by_role(self) -> None:
+        url = reverse("materials:courses-list")
+
+        self.client.force_authenticate(user=self.owner)
+        self.assertEqual(self.client.get(url).json()["count"], 1)
+
+        self.client.force_authenticate(user=self.other)
+        self.assertEqual(self.client.get(url).json()["count"], 0)
+
+        self.client.force_authenticate(user=self.moder)
+        self.assertEqual(self.client.get(url).json()["count"], 1)
+
+    def test_retrieve_course(self) -> None:
+        url = reverse("materials:courses-detail", args=[self.course.id])
+
+        self.client.force_authenticate(user=self.owner)
+        response = self.client.get(url)
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.json()["lessons_count"], 1)
+        self.assertEqual(len(response.json()["lessons"]), 1)
+
+        self.client.force_authenticate(user=self.moder)
+        self.assertEqual(self.client.get(url).status_code, status.HTTP_200_OK)
+
+        self.client.force_authenticate(user=self.other)
+        self.assertEqual(self.client.get(url).status_code, status.HTTP_403_FORBIDDEN)
+
+    def test_update_course(self) -> None:
+        url = reverse("materials:courses-detail", args=[self.course.id])
+
+        self.client.force_authenticate(user=self.owner)
+        response = self.client.patch(url, {"title": "Новое название"})
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.course.refresh_from_db()
+        self.assertEqual(self.course.title, "Новое название")
+
+        self.client.force_authenticate(user=self.moder)
+        response = self.client.patch(url, {"title": "Правка модератора"})
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+
+        self.client.force_authenticate(user=self.other)
+        response = self.client.patch(url, {"title": "Взлом"})
+        self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
+
+    def test_delete_course_forbidden(self) -> None:
+        url = reverse("materials:courses-detail", args=[self.course.id])
+
+        self.client.force_authenticate(user=self.moder)
+        self.assertEqual(self.client.delete(url).status_code, status.HTTP_403_FORBIDDEN)
+
+        self.client.force_authenticate(user=self.other)
+        self.assertEqual(self.client.delete(url).status_code, status.HTTP_403_FORBIDDEN)
+
+        self.assertTrue(Course.objects.filter(id=self.course.id).exists())
+
+    def test_delete_course_by_owner(self) -> None:
+        self.client.force_authenticate(user=self.owner)
+        url = reverse("materials:courses-detail", args=[self.course.id])
+        response = self.client.delete(url)
+
+        self.assertEqual(response.status_code, status.HTTP_204_NO_CONTENT)
+        self.assertFalse(Course.objects.filter(id=self.course.id).exists())
