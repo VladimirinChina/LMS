@@ -35,6 +35,8 @@ class CourseSerializer(serializers.ModelSerializer):
     lessons_count = serializers.SerializerMethodField()
     lessons = LessonSerializer(many=True, read_only=True)
 
+    is_subscribed = serializers.SerializerMethodField()
+
     class Meta:
         model = Course
         fields = "__all__"
@@ -42,3 +44,10 @@ class CourseSerializer(serializers.ModelSerializer):
 
     def get_lessons_count(self, obj: Course) -> int:
         return obj.lessons.count()
+
+    def get_is_subscribed(self, obj: Course) -> bool:
+        request = self.context.get("request")
+        if request is None or not request.user.is_authenticated:
+            return False
+        return obj.subscriptions.filter(user=request.user).exists()
+

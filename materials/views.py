@@ -1,13 +1,17 @@
 from typing import Any
 
 from django.db.models import QuerySet
-from rest_framework import generics, viewsets
+from rest_framework import viewsets, status, generics
+from rest_framework.generics import get_object_or_404
 from rest_framework.permissions import BasePermission, IsAuthenticated
+from rest_framework.request import Request
+from rest_framework.response import Response
 from rest_framework.serializers import BaseSerializer
+from rest_framework.views import APIView
 
 from users.permissions import IsModer, IsOwner, is_moder
 
-from .models import Course, Lesson
+from .models import Course, Lesson, Subscription
 from .serializers import CourseSerializer, LessonSerializer
 
 
@@ -74,3 +78,27 @@ class LessonDestroyAPIView(generics.DestroyAPIView):
     queryset = Lesson.objects.all()
     serializer_class = LessonSerializer
     permission_classes = [IsAuthenticated, ~IsModer, IsOwner]
+
+
+class SubscriptionAPIView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request: Request) -> Response:
+        course_id = request.data.get("course")
+        if course_id is None:
+            return Response(
+                {"error": "Не указан id курса (поле course)"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        course = get_object_or_404(Course, pk=course_id)
+        subscription = Subscription.objects.filter(user=request.user, course=course)
+
+        if subscription.exists():
+            subscription.delete()
+            message = "Подписка удалена"
+        else:
+            Subscription.objects.create(user=request.user, course=course)
+            message = "Подписка добавлена"
+
+        return Response({"message": message})
