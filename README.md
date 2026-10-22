@@ -135,9 +135,67 @@ Authorization: Bearer <access-токен>
 
 `POST /subscriptions/` с телом `{"course": <id курса>}`: если подписки нет, она создаётся (`"Подписка добавлена"`), если есть, удаляется (`"Подписка удалена"`). В данных курса поле `is_subscribed` показывает, подписан ли текущий пользователь.
 
+Пример запроса:
+
+```http
+POST /subscriptions/
+Authorization: Bearer <access-токен>
+Content-Type: application/json
+
+{"course": 1}
+```
+
+Ответ, если подписки не было (она создана):
+
+```json
+{"message": "Подписка добавлена"}
+```
+
+Тот же запрос повторно (подписка удалена):
+
+```json
+{"message": "Подписка удалена"}
+```
+
+Ошибки: `400`, если не указано поле `course` (`{"error": "Не указан id курса (поле course)"}`), `404`, если курса с таким id нет, `401`, если токен не передан или недействителен.
+
 ## Пагинация
 
 Списки курсов (`/courses/`) и уроков (`/lessons/`) выдаются постранично: по умолчанию 5 курсов и 10 уроков на странице. Параметры: `?page=<номер>` и `?page_size=<размер>` (максимум 50 для курсов и 100 для уроков). Формат ответа: `count`, `next`, `previous`, `results`.
+
+Пример запроса: `GET /courses/?page=1&page_size=2`
+
+```json
+{
+  "count": 7,
+  "next": "http://127.0.0.1:8000/courses/?page=2&page_size=2",
+  "previous": null,
+  "results": [
+    {
+      "id": 1,
+      "description": "Основы языка",
+      "lessons_count": 1,
+      "lessons": [
+        {
+          "id": 1,
+          "description": "Введение",
+          "video_url": "https://www.youtube.com/watch?v=abc",
+          "title": "Первый урок",
+          "preview": null,
+          "course": 1,
+          "owner": 2
+        }
+      ],
+      "is_subscribed": false,
+      "title": "Python для начинающих",
+      "preview": null,
+      "owner": 2
+    }
+  ]
+}
+```
+
+Поля `count` (всего объектов), `next` и `previous` (ссылки на соседние страницы, `null`, если страницы нет) и `results` (объекты текущей страницы) одинаковы для курсов и уроков.
 
 ## Тесты и покрытие
 
