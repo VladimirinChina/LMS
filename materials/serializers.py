@@ -50,3 +50,11 @@ class CourseSerializer(serializers.ModelSerializer):
         if request is None or not request.user.is_authenticated:
             return False
         return obj.subscriptions.filter(user=request.user).exists()
+
+
+class SubscriptionRequestSerializer(serializers.Serializer):
+    course = serializers.IntegerField(help_text="ID курса")
+
+
+class SubscriptionResponseSerializer(serializers.Serializer):
+    message = serializers.CharField(help_text="«Подписка добавлена» или «Подписка удалена»")

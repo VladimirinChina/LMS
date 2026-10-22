@@ -210,3 +210,10 @@ class FillPaymentsCommandTestCase(TestCase):
 
         call_command("fill_payments", stdout=StringIO())
         self.assertEqual(Payment.objects.count(), 4)
+
+
+class DocsTestCase(APITestCase):
+    def test_schema_and_docs_available(self) -> None:
+        for name in ("schema", "swagger-ui", "redoc"):
+            response = self.client.get(reverse(name))
+            self.assertEqual(response.status_code, status.HTTP_200_OK)
