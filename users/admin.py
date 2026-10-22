@@ -19,5 +19,5 @@ class UserAdmin(BaseUserAdmin):
 
 @admin.register(Payment)
 class PaymentAdmin(admin.ModelAdmin):
-    list_display = ("user", "paid_at", "course", "lesson", "amount", "method")
+    list_display = ("user", "paid_at", "course", "lesson", "amount", "method", "status")
     list_filter = ("method", "course", "lesson")

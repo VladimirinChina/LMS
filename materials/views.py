@@ -16,12 +16,8 @@ from users.permissions import IsModer, IsOwner, is_moder
 
 from .models import Course, Lesson, Subscription
 from .paginators import CoursePagination, LessonPagination
-from .serializers import (
-    CourseSerializer,
-    LessonSerializer,
-    SubscriptionRequestSerializer,
-    SubscriptionResponseSerializer,
-)
+from .serializers import (CourseSerializer, LessonSerializer, SubscriptionRequestSerializer,
+                          SubscriptionResponseSerializer)
 
 COURSES = ["Курсы"]
 LESSONS = ["Уроки"]

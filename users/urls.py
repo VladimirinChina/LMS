@@ -1,16 +1,9 @@
 from django.urls import path
 
 from .apps import UsersConfig
-from .views import (
-    PaymentListAPIView,
-    UserDestroyAPIView,
-    UserListAPIView,
-    UserRegisterAPIView,
-    UserRetrieveAPIView,
-    UserUpdateAPIView,
-    CustomTokenObtainPairView,
-    CustomTokenRefreshView,
-)
+from .views import (CustomTokenObtainPairView, CustomTokenRefreshView, PaymentListAPIView, UserDestroyAPIView,
+                    UserListAPIView, UserRegisterAPIView, UserRetrieveAPIView, UserUpdateAPIView, PaymentCreateAPIView,
+                    PaymentStatusAPIView)
 
 app_name = UsersConfig.name
 
@@ -23,4 +16,6 @@ urlpatterns = [
     path("<int:pk>/", UserRetrieveAPIView.as_view(), name="user-detail"),
     path("<int:pk>/update/", UserUpdateAPIView.as_view(), name="user-update"),
     path("<int:pk>/delete/", UserDestroyAPIView.as_view(), name="user-delete"),
+    path("payments/create/", PaymentCreateAPIView.as_view(), name="payment-create"),
+    path("payments/<int:pk>/status/", PaymentStatusAPIView.as_view(), name="payment-status"),
 ]
