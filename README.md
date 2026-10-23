@@ -26,6 +26,8 @@
 - black, flake8, mypy (django-stubs)
 - djangorestframework-simplejwt (JWT-авторизация)
 - django-filter (фильтрация)
+- drf-spectacular (документация API, Swagger/ReDoc)
+- Stripe (приём платежей, тестовый режим)
 
 ## Установка и запуск
 
@@ -37,6 +39,11 @@
 ```
 
 3. Создать файл `.env` на основе `.env.example` и указать свой `SECRET_KEY`:
+
+- `SECRET_KEY` — секретный ключ Django;
+- `DEBUG` — `True` или `False`;
+- `STRIPE_API_KEY` — секретный тестовый ключ Stripe (`sk_test_...`, раздел Developers → API keys в личном кабинете Stripe);
+- `STRIPE_CURRENCY` — валюта платежей (по умолчанию `rub`, если Stripe не принимает её для аккаунта, укажите `usd`).
 
 ```bash
    cp .env.example .env
@@ -111,6 +118,10 @@ Authorization: Bearer <access-токен>
 | PUT / PATCH | `/lessons/<id>/update/` | изменить урок | модератор или владелец |
 | DELETE | `/lessons/<id>/delete/` | удалить урок | владелец, не модератор |
 | POST | `/subscriptions/` | подписаться на курс или отписаться (тело: `{"course": <id>}`) | авторизованные |
+| POST | `/users/payments/create/` | создать платёж и получить ссылку на оплату Stripe | авторизованные |
+| GET | `/users/payments/<id>/status/` | проверить статус платежа в Stripe | владелец платежа |
+| GET | `/api/docs/swagger/` | документация Swagger UI | все |
+| GET | `/api/docs/redoc/` | документация ReDoc | все |
 
 Список платежей поддерживает параметры: `?ordering=paid_at` или `?ordering=-paid_at`, `?course=<id>`, `?lesson=<id>`, `?method=cash|transfer`.
 
@@ -197,6 +208,50 @@ Content-Type: application/json
 
 Поля `count` (всего объектов), `next` и `previous` (ссылки на соседние страницы, `null`, если страницы нет) и `results` (объекты текущей страницы) одинаковы для курсов и уроков.
 
+## Документация API
+
+После запуска сервера документация доступна по адресам:
+
+- Swagger UI: http://127.0.0.1:8000/api/docs/swagger/
+- ReDoc: http://127.0.0.1:8000/api/docs/redoc/
+- Схема OpenAPI: http://127.0.0.1:8000/api/schema/
+
+В Swagger UI можно авторизоваться кнопкой **Authorize** (вставить `access`-токен) и отправлять запросы прямо из браузера. Для каждого эндпоинта описаны параметры, тело запроса, ответы и возможные ошибки.
+
+## Оплата курсов через Stripe
+
+У курса есть поле `price` (цена, задаётся владельцем курса или в админке). Оплата работает в тестовом режиме Stripe.
+
+1. `POST /users/payments/create/` (нужен токен), тело запроса:
+
+```json
+   {"course": 1}
+```
+
+   Сервер создаёт в Stripe продукт, цену (сумма передаётся в копейках) и сессию оплаты, сохраняет платёж и возвращает данные платежа со ссылкой на оплату:
+
+```json
+   {
+     "id": 5,
+     "paid_at": "2026-10-22T10:15:00Z",
+     "amount": "5000.00",
+     "method": "transfer",
+     "status": "unpaid",
+     "stripe_product_id": "prod_...",
+     "stripe_price_id": "price_...",
+     "stripe_session_id": "cs_test_...",
+     "payment_url": "https://checkout.stripe.com/c/pay/cs_test_...",
+     "user": 2,
+     "course": 1,
+     "lesson": null
+   }
+```
+
+2. Откройте `payment_url` в браузере и оплатите тестовой картой `4242 4242 4242 4242` (любая будущая дата, любой CVC).
+3. `GET /users/payments/<id>/status/` запрашивает у Stripe статус сессии и обновляет поле `status` платежа (`unpaid` или `paid`).
+
+Ошибки: `400`, если курс не найден или у курса не задана цена, `401`, если токен не передан, `404`, если платёж чужой или не существует, `502`, если Stripe вернул ошибку (текст ошибки в поле `error`).
+
 ## Тесты и покрытие
 
 ```bash
@@ -212,6 +267,7 @@ poetry run coverage report
 - `config/` — настройки проекта и корневые маршруты
 - `users/` — модель пользователя, сериализатор и контроллер профиля
 - `materials/` — модели курса и урока, сериализаторы, контроллеры и маршруты
+- `users/services.py` — сервисные функции для работы со Stripe
 
 ## Проверка качества кода
 
