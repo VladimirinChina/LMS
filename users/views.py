@@ -8,12 +8,7 @@ from rest_framework.serializers import BaseSerializer
 
 from .models import Payment, User
 from .permissions import IsProfileOwner
-from .serializers import (
-    PaymentSerializer,
-    UserPublicSerializer,
-    UserRegisterSerializer,
-    UserSerializer,
-)
+from .serializers import PaymentSerializer, UserPublicSerializer, UserRegisterSerializer, UserSerializer
 
 
 class UserRegisterAPIView(generics.CreateAPIView):

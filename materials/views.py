@@ -1,19 +1,26 @@
-from typing import Any
+from typing import Any, cast
 
 from django.db.models import QuerySet
-from rest_framework import generics, viewsets
+from rest_framework import generics, status, viewsets
+from rest_framework.generics import get_object_or_404
 from rest_framework.permissions import BasePermission, IsAuthenticated
+from rest_framework.request import Request
+from rest_framework.response import Response
 from rest_framework.serializers import BaseSerializer
+from rest_framework.views import APIView
 
+from users.models import User
 from users.permissions import IsModer, IsOwner, is_moder
 
-from .models import Course, Lesson
+from .models import Course, Lesson, Subscription
+from .paginators import CoursePagination, LessonPagination
 from .serializers import CourseSerializer, LessonSerializer
 
 
 class CourseViewSet(viewsets.ModelViewSet):
-    queryset = Course.objects.all()
+    queryset = Course.objects.all().order_by("id")
     serializer_class = CourseSerializer
+    pagination_class = CoursePagination
 
     def get_queryset(self) -> QuerySet[Course]:
         queryset = super().get_queryset()
@@ -38,9 +45,10 @@ class CourseViewSet(viewsets.ModelViewSet):
 
 
 class LessonListAPIView(generics.ListAPIView):
-    queryset = Lesson.objects.all()
+    queryset = Lesson.objects.all().order_by("id")
     serializer_class = LessonSerializer
     permission_classes = [IsAuthenticated]
+    pagination_class = LessonPagination
 
     def get_queryset(self) -> QuerySet[Lesson]:
         queryset = super().get_queryset()
@@ -74,3 +82,29 @@ class LessonDestroyAPIView(generics.DestroyAPIView):
     queryset = Lesson.objects.all()
     serializer_class = LessonSerializer
     permission_classes = [IsAuthenticated, ~IsModer, IsOwner]
+
+
+class SubscriptionAPIView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request: Request) -> Response:
+        user = cast(User, request.user)
+        data = request.data
+        course_id = data.get("course") if isinstance(data, dict) else None
+        if course_id is None:
+            return Response(
+                {"error": "Не указан id курса (поле course)"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        course = get_object_or_404(Course, pk=course_id)
+        subscription = Subscription.objects.filter(user=user, course=course)
+
+        if subscription.exists():
+            subscription.delete()
+            message = "Подписка удалена"
+        else:
+            Subscription.objects.create(user=user, course=course)
+            message = "Подписка добавлена"
+
+        return Response({"message": message})
