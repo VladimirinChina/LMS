@@ -1,9 +1,12 @@
 from datetime import timedelta
 from decimal import Decimal
 from io import StringIO
+from unittest.mock import patch, MagicMock
 
+import stripe
+from django.conf import settings
 from django.core.management import call_command
-from django.test import TestCase
+from django.test import TestCase, override_settings
 from django.urls import reverse
 from django.utils import timezone
 from rest_framework import status
@@ -12,6 +15,7 @@ from rest_framework.test import APITestCase
 from materials.models import Course, Lesson
 
 from .models import Payment, User
+from .services import PaymentServiceError, create_stripe_price, create_stripe_product
 
 
 class UserTestCase(APITestCase):
@@ -210,3 +214,160 @@ class FillPaymentsCommandTestCase(TestCase):
 
         call_command("fill_payments", stdout=StringIO())
         self.assertEqual(Payment.objects.count(), 4)
+
+
+class DocsTestCase(APITestCase):
+    def test_schema_and_docs_available(self) -> None:
+        for name in ("schema", "swagger-ui", "redoc"):
+            response = self.client.get(reverse(name))
+            self.assertEqual(response.status_code, status.HTTP_200_OK)
+
+
+class StripePaymentTestCase(APITestCase):
+    def setUp(self) -> None:
+        self.user = User.objects.create_user(email="user@example.com", password="pass12345")
+        self.other = User.objects.create_user(email="other@example.com", password="pass12345")
+        self.course = Course.objects.create(title="Курс", price=Decimal("5000.00"), owner=self.user)
+        self.url = reverse("users:payment-create")
+        self.session = {
+            "id": "cs_test_1",
+            "url": "https://checkout.stripe.com/c/pay/cs_test_1",
+            "payment_status": "unpaid",
+        }
+
+    @patch("users.views.create_stripe_session")
+    @patch("users.views.create_stripe_price")
+    @patch("users.views.create_stripe_product")
+    def test_create_payment(self, mock_product: MagicMock, mock_price: MagicMock, mock_session: MagicMock) -> None:
+        mock_product.return_value = {"id": "prod_1"}
+        mock_price.return_value = {"id": "price_1"}
+        mock_session.return_value = self.session
+        self.client.force_authenticate(user=self.user)
+
+        response = self.client.post(self.url, {"course": self.course.id})
+
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        self.assertEqual(response.json()["payment_url"], self.session["url"])
+        payment = Payment.objects.get(stripe_session_id="cs_test_1")
+        self.assertEqual(payment.user, self.user)
+        self.assertEqual(payment.course, self.course)
+        self.assertEqual(payment.amount, Decimal("5000.00"))
+        self.assertEqual(payment.stripe_product_id, "prod_1")
+        self.assertEqual(payment.stripe_price_id, "price_1")
+        mock_product.assert_called_once_with("Курс")
+        mock_price.assert_called_once_with("prod_1", Decimal("5000.00"))
+        mock_session.assert_called_once_with("price_1")
+
+    @patch("users.views.create_stripe_product")
+    def test_create_payment_stripe_error(self, mock_product: MagicMock) -> None:
+        mock_product.side_effect = PaymentServiceError("Ошибка Stripe")
+        self.client.force_authenticate(user=self.user)
+
+        response = self.client.post(self.url, {"course": self.course.id})
+
+        self.assertEqual(response.status_code, status.HTTP_502_BAD_GATEWAY)
+        self.assertIn("error", response.json())
+        self.assertEqual(Payment.objects.count(), 0)
+
+    def test_create_payment_course_without_price(self) -> None:
+        free_course = Course.objects.create(title="Бесплатный", owner=self.user)
+        self.client.force_authenticate(user=self.user)
+
+        response = self.client.post(self.url, {"course": free_course.id})
+
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+
+    def test_create_payment_invalid_course(self) -> None:
+        self.client.force_authenticate(user=self.user)
+
+        self.assertEqual(
+            self.client.post(self.url, {"course": 99999}).status_code,
+            status.HTTP_400_BAD_REQUEST,
+        )
+        self.assertEqual(self.client.post(self.url, {}).status_code, status.HTTP_400_BAD_REQUEST)
+
+    def test_create_payment_unauthenticated(self) -> None:
+        response = self.client.post(self.url, {"course": self.course.id})
+
+        self.assertEqual(response.status_code, status.HTTP_401_UNAUTHORIZED)
+
+    @patch("users.views.retrieve_stripe_session")
+    def test_payment_status_is_synced(self, mock_retrieve: MagicMock) -> None:
+        payment = Payment.objects.create(
+            user=self.user,
+            course=self.course,
+            amount=Decimal("5000.00"),
+            stripe_session_id="cs_test_1",
+        )
+        mock_retrieve.return_value = {"payment_status": "paid"}
+        self.client.force_authenticate(user=self.user)
+
+        response = self.client.get(reverse("users:payment-status", args=[payment.id]))
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.json()["status"], "paid")
+        payment.refresh_from_db()
+        self.assertEqual(payment.status, "paid")
+        mock_retrieve.assert_called_once_with("cs_test_1")
+
+    def test_payment_status_of_foreign_payment(self) -> None:
+        payment = Payment.objects.create(
+            user=self.user,
+            course=self.course,
+            amount=Decimal("5000.00"),
+            stripe_session_id="cs_test_1",
+        )
+        self.client.force_authenticate(user=self.other)
+
+        response = self.client.get(reverse("users:payment-status", args=[payment.id]))
+
+        self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
+
+    def test_payment_status_without_session(self) -> None:
+        payment = Payment.objects.create(user=self.user, course=self.course, amount=Decimal("5000.00"))
+        self.client.force_authenticate(user=self.user)
+
+        response = self.client.get(reverse("users:payment-status", args=[payment.id]))
+
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+
+    @patch("users.views.retrieve_stripe_session")
+    def test_payment_status_stripe_error(self, mock_retrieve: MagicMock) -> None:
+        payment = Payment.objects.create(
+            user=self.user,
+            course=self.course,
+            amount=Decimal("5000.00"),
+            stripe_session_id="cs_test_1",
+        )
+        mock_retrieve.side_effect = PaymentServiceError("Ошибка Stripe")
+        self.client.force_authenticate(user=self.user)
+
+        response = self.client.get(reverse("users:payment-status", args=[payment.id]))
+
+        self.assertEqual(response.status_code, status.HTTP_502_BAD_GATEWAY)
+
+
+class StripeServiceTestCase(TestCase):
+    @override_settings(STRIPE_API_KEY="sk_test_x")
+    @patch("users.services.stripe.Price.create")
+    def test_price_is_in_kopecks(self, mock_create: MagicMock) -> None:
+        create_stripe_price("prod_1", Decimal("5000.00"))
+
+        mock_create.assert_called_once_with(
+            currency=settings.STRIPE_CURRENCY,
+            unit_amount=500000,
+            product="prod_1",
+        )
+
+    @override_settings(STRIPE_API_KEY="")
+    def test_missing_api_key(self) -> None:
+        with self.assertRaises(PaymentServiceError):
+            create_stripe_product("Курс")
+
+    @override_settings(STRIPE_API_KEY="sk_test_x")
+    @patch("users.services.stripe.Product.create")
+    def test_stripe_error_is_wrapped(self, mock_create: MagicMock) -> None:
+        mock_create.side_effect = stripe.StripeError("boom")
+
+        with self.assertRaises(PaymentServiceError):
+            create_stripe_product("Курс")
