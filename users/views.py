@@ -249,7 +249,7 @@ class PaymentStatusAPIView(generics.RetrieveAPIView):
     def get_queryset(self) -> QuerySet[Payment]:
         if getattr(self, "swagger_fake_view", False):
             return Payment.objects.none()
-        return Payment.objects.filter(user=self.request.user)
+        return Payment.objects.filter(user=cast(User, self.request.user))
 
     def retrieve(self, request: Request, *args: Any, **kwargs: Any) -> Response:
         payment = self.get_object()
