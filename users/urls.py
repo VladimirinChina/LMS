@@ -4,14 +4,14 @@ from .apps import UsersConfig
 from .views import (
     CustomTokenObtainPairView,
     CustomTokenRefreshView,
+    PaymentCreateAPIView,
     PaymentListAPIView,
+    PaymentStatusAPIView,
     UserDestroyAPIView,
     UserListAPIView,
     UserRegisterAPIView,
     UserRetrieveAPIView,
     UserUpdateAPIView,
-    PaymentCreateAPIView,
-    PaymentStatusAPIView,
 )
 
 app_name = UsersConfig.name

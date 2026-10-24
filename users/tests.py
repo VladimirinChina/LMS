@@ -1,7 +1,8 @@
 from datetime import timedelta
 from decimal import Decimal
 from io import StringIO
-from unittest.mock import patch, MagicMock
+from typing import Any
+from unittest.mock import MagicMock, patch
 
 import stripe
 from django.conf import settings
@@ -16,6 +17,7 @@ from materials.models import Course, Lesson
 
 from .models import Payment, User
 from .services import PaymentServiceError, create_stripe_price, create_stripe_product
+from .tasks import block_inactive_users
 
 
 class UserTestCase(APITestCase):
@@ -371,3 +373,49 @@ class StripeServiceTestCase(TestCase):
 
         with self.assertRaises(PaymentServiceError):
             create_stripe_product("Курс")
+
+
+class BlockInactiveUsersTaskTestCase(TestCase):
+    def _make_user(self, email: str, **fields: Any) -> User:
+        user = User.objects.create_user(email=email, password="pass12345")
+        User.objects.filter(pk=user.pk).update(**fields)
+        user.refresh_from_db()
+        return user
+
+    def test_blocks_only_inactive_users(self) -> None:
+        now = timezone.now()
+        old_login = self._make_user("old@example.com", last_login=now - timedelta(days=40))
+        recent_login = self._make_user("recent@example.com", last_login=now - timedelta(days=5))
+        never_old = self._make_user("never_old@example.com", date_joined=now - timedelta(days=40))
+        never_new = self._make_user("never_new@example.com")
+        superuser = self._make_user("admin@example.com", last_login=now - timedelta(days=400), is_superuser=True)
+
+        blocked_count = block_inactive_users()
+
+        self.assertEqual(blocked_count, 2)
+        for user, expected_active in (
+            (old_login, False),
+            (recent_login, True),
+            (never_old, False),
+            (never_new, True),
+            (superuser, True),
+        ):
+            user.refresh_from_db()
+            self.assertEqual(user.is_active, expected_active, user.email)
+
+    def test_already_blocked_users_are_not_counted(self) -> None:
+        self._make_user(
+            "blocked@example.com",
+            last_login=timezone.now() - timedelta(days=40),
+            is_active=False,
+        )
+
+        self.assertEqual(block_inactive_users(), 0)
+
+
+class CeleryScheduleTestCase(TestCase):
+    def test_block_inactive_users_is_scheduled(self) -> None:
+        schedule = settings.CELERY_BEAT_SCHEDULE["block_inactive_users"]
+
+        self.assertEqual(schedule["task"], "users.tasks.block_inactive_users")
+        self.assertEqual(settings.CELERY_TIMEZONE, settings.TIME_ZONE)

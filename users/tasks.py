@@ -13,9 +13,5 @@ INACTIVITY_PERIOD = timedelta(days=30)
 def block_inactive_users() -> int:
     """Блокирует пользователей, которые не заходили более месяца."""
     threshold = timezone.now() - INACTIVITY_PERIOD
-    inactive = Q(last_login__lt=threshold) | Q(
-        last_login__isnull=True, date_joined__lt=threshold
-    )
-    return User.objects.filter(inactive, is_active=True, is_superuser=False).update(
-        is_active=False
-    )
+    inactive = Q(last_login__lt=threshold) | Q(last_login__isnull=True, date_joined__lt=threshold)
+    return User.objects.filter(inactive, is_active=True, is_superuser=False).update(is_active=False)
