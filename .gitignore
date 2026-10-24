@@ -221,3 +221,5 @@ __marimo__/
 # User-uploaded media files
 media
 schema.yml
+
+celerybeat-schedule*
