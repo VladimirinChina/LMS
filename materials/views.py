@@ -22,6 +22,8 @@ from .serializers import (
     SubscriptionRequestSerializer,
     SubscriptionResponseSerializer,
 )
+from .services import should_notify
+from .tasks import send_course_update_email
 
 COURSES = ["Курсы"]
 LESSONS = ["Уроки"]
@@ -93,6 +95,12 @@ class CourseViewSet(viewsets.ModelViewSet):
 
     def perform_create(self, serializer: BaseSerializer[Any]) -> None:
         serializer.save(owner=self.request.user)
+
+    def perform_update(self, serializer: BaseSerializer[Any]) -> None:
+        previous_update = cast(Course, serializer.instance).updated_at
+        course = serializer.save()
+        if should_notify(previous_update):
+            send_course_update_email.delay(course.id)
 
 
 @extend_schema_view(
@@ -170,6 +178,14 @@ class LessonUpdateAPIView(generics.UpdateAPIView):
     queryset = Lesson.objects.all()
     serializer_class = LessonSerializer
     permission_classes = [IsAuthenticated, IsModer | IsOwner]
+
+    def perform_update(self, serializer: BaseSerializer[Any]) -> None:
+        course = cast(Lesson, serializer.instance).course
+        previous_update = course.updated_at
+        serializer.save()
+        course.save(update_fields=["updated_at"])
+        if should_notify(previous_update):
+            send_course_update_email.delay(course.id)
 
 
 @extend_schema_view(
