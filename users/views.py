@@ -16,20 +16,10 @@ from config.api_docs import BAD_REQUEST, FORBIDDEN, NOT_FOUND, UNAUTHORIZED
 
 from .models import Payment, User
 from .permissions import IsProfileOwner
-from .serializers import (
-    PaymentCreateSerializer,
-    PaymentSerializer,
-    UserPublicSerializer,
-    UserRegisterSerializer,
-    UserSerializer,
-)
-from .services import (
-    PaymentServiceError,
-    create_stripe_price,
-    create_stripe_product,
-    create_stripe_session,
-    retrieve_stripe_session,
-)
+from .serializers import (PaymentCreateSerializer, PaymentSerializer, UserPublicSerializer, UserRegisterSerializer,
+                          UserSerializer)
+from .services import (PaymentServiceError, create_stripe_price, create_stripe_product, create_stripe_session,
+                       retrieve_stripe_session)
 
 AUTH = ["Авторизация"]
 USERS = ["Пользователи"]
