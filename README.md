@@ -28,6 +28,8 @@
 - django-filter (фильтрация)
 - drf-spectacular (документация API, Swagger/ReDoc)
 - Stripe (приём платежей, тестовый режим)
+- Celery и celery-beat (фоновые и периодические задачи)
+- Redis (брокер сообщений для Celery)
 
 ## Установка и запуск
 
@@ -44,6 +46,10 @@
 - `DEBUG` — `True` или `False`;
 - `STRIPE_API_KEY` — секретный тестовый ключ Stripe (`sk_test_...`, раздел Developers → API keys в личном кабинете Stripe);
 - `STRIPE_CURRENCY` — валюта платежей (по умолчанию `rub`, если Stripe не принимает её для аккаунта, укажите `usd`).
+- `CELERY_BROKER_URL` — адрес брокера Redis (по умолчанию `redis://localhost:6379/0`);
+- `CELERY_RESULT_BACKEND` — адрес хранилища результатов задач (по умолчанию `redis://localhost:6379/0`);
+- `EMAIL_BACKEND` — бэкенд отправки почты (по умолчанию консольный: письма печатаются в терминале воркера). Для реальной отправки укажите `django.core.mail.backends.smtp.EmailBackend` и заполните `EMAIL_HOST`, `EMAIL_PORT`, `EMAIL_HOST_USER`, `EMAIL_HOST_PASSWORD`, `EMAIL_USE_TLS`;
+- `DEFAULT_FROM_EMAIL` — адрес отправителя писем.
 
 ```bash
    cp .env.example .env
@@ -78,6 +84,22 @@
 ```bash
    poetry run python manage.py runserver
 ```
+9. Установить и запустить Redis (macOS):
+
+   ```bash
+   brew install redis
+   brew services start redis
+   redis-cli ping   # должен ответить PONG
+   ```
+
+10. В отдельных терминалах запустить воркер Celery и планировщик celery-beat:
+
+   ```bash
+   poetry run celery -A config worker -l info -P solo
+   poetry run celery -A config beat -l info
+   ```
+
+   Режим `-P solo` для воркера рекомендуется при локальной разработке на macOS.
 
 Сервер будет доступен по адресу http://127.0.0.1:8000/, админка: http://127.0.0.1:8000/admin/.
 
@@ -252,6 +274,31 @@ Content-Type: application/json
 
 Ошибки: `400`, если курс не найден или у курса не задана цена, `401`, если токен не передан, `404`, если платёж чужой или не существует, `502`, если Stripe вернул ошибку (текст ошибки в поле `error`).
 
+## Фоновые задачи (Celery)
+
+Celery настроен в `config/celery.py`, брокер и хранилище результатов Redis, настройки берутся из `.env`. Часовой пояс Celery (`CELERY_TIMEZONE`) совпадает с `TIME_ZONE` проекта.
+
+### Рассылка об обновлении курса
+
+Задача `materials.tasks.send_course_update_email` отправляет письмо каждому активному подписчику курса. Она вызывается из контроллеров после успешного обновления:
+
+- при обновлении курса (`PUT`/`PATCH /courses/<id>/`);
+- при обновлении любого урока курса (`PUT`/`PATCH /lessons/<id>/update/`), урок считается частью курса.
+
+Уведомление отправляется только если курс не обновлялся более 4 часов (проверяется по полю `updated_at` курса), поэтому частые правки не засыпают подписчиков письмами.
+
+По умолчанию используется консольный почтовый бэкенд: текст письма выводится в терминале воркера.
+
+### Блокировка неактивных пользователей
+
+Периодическая задача `users.tasks.block_inactive_users` запускается каждый день в 03:00 (расписание в `CELERY_BEAT_SCHEDULE` в `config/settings.py`). Она одним запросом блокирует (`is_active=False`) пользователей, которые не заходили более 30 дней по полю `last_login`, а также тех, кто зарегистрировался более 30 дней назад и ни разу не входил. Суперпользователи не блокируются. Поле `last_login` обновляется при получении JWT-токена.
+
+Запустить задачу вручную:
+
+```bash
+poetry run python manage.py shell -c "from users.tasks import block_inactive_users; print(block_inactive_users.delay().get(timeout=10))"
+```
+
 ## Тесты и покрытие
 
 ```bash
@@ -260,6 +307,7 @@ poetry run coverage run manage.py test
 poetry run coverage report
 ```
 
+Тестам не нужен запущенный Redis: вызовы задач подменяются, письма проверяются через mail.outbox.
 Результат проверки покрытия сохранён в файле `coverage.txt`.
 
 ## Структура проекта
@@ -268,6 +316,8 @@ poetry run coverage report
 - `users/` — модель пользователя, сериализатор и контроллер профиля
 - `materials/` — модели курса и урока, сериализаторы, контроллеры и маршруты
 - `users/services.py` — сервисные функции для работы со Stripe
+- `config/celery.py` — приложение Celery
+- `materials/tasks.py`, `users/tasks.py` — Celery-задачи
 
 ## Проверка качества кода
 

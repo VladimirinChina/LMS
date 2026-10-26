@@ -14,6 +14,7 @@ import os
 from datetime import timedelta
 from pathlib import Path
 
+from celery.schedules import crontab
 from dotenv import load_dotenv
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
@@ -133,14 +134,26 @@ USE_TZ = True
 STATIC_URL = "static/"
 
 
-# Email
-# https://docs.djangoproject.com/en/6.1/topics/email/#topic-email-configuration
+# Почта (настройка MAILERS, Django 6.1+)
+MAIL_BACKEND = os.getenv("EMAIL_BACKEND", "django.core.mail.backends.console.EmailBackend")
+MAILER_OPTIONS: dict[str, object] = {}
+if MAIL_BACKEND.endswith("smtp.EmailBackend"):
+    MAILER_OPTIONS = {
+        "host": os.getenv("EMAIL_HOST", "localhost"),
+        "port": int(os.getenv("EMAIL_PORT", "587")),
+        "username": os.getenv("EMAIL_HOST_USER", ""),
+        "password": os.getenv("EMAIL_HOST_PASSWORD", ""),
+        "use_tls": os.getenv("EMAIL_USE_TLS", "True") == "True",
+    }
 
 MAILERS = {
     "default": {
-        "BACKEND": "django.core.mail.backends.console.EmailBackend",
+        "BACKEND": MAIL_BACKEND,
+        **({"OPTIONS": MAILER_OPTIONS} if MAILER_OPTIONS else {}),
     },
 }
+
+DEFAULT_FROM_EMAIL = os.getenv("DEFAULT_FROM_EMAIL", "noreply@lms.local")
 
 
 REST_FRAMEWORK = {
@@ -156,6 +169,7 @@ REST_FRAMEWORK = {
 SIMPLE_JWT = {
     "ACCESS_TOKEN_LIFETIME": timedelta(minutes=30),
     "REFRESH_TOKEN_LIFETIME": timedelta(days=1),
+    "UPDATE_LAST_LOGIN": True,
 }
 
 SPECTACULAR_SETTINGS = {
@@ -172,3 +186,17 @@ STRIPE_API_KEY = os.getenv("STRIPE_API_KEY", "")
 STRIPE_CURRENCY = os.getenv("STRIPE_CURRENCY", "rub")
 STRIPE_SUCCESS_URL = os.getenv("STRIPE_SUCCESS_URL", "http://127.0.0.1:8000/")
 STRIPE_CANCEL_URL = os.getenv("STRIPE_CANCEL_URL", "http://127.0.0.1:8000/")
+
+
+# Celery
+CELERY_BROKER_URL = os.getenv("CELERY_BROKER_URL", "redis://localhost:6379/0")
+CELERY_RESULT_BACKEND = os.getenv("CELERY_RESULT_BACKEND", "redis://localhost:6379/0")
+CELERY_TIMEZONE = TIME_ZONE
+CELERY_TASK_TRACK_STARTED = True
+CELERY_TASK_TIME_LIMIT = 30 * 60
+CELERY_BEAT_SCHEDULE = {
+    "block_inactive_users": {
+        "task": "users.tasks.block_inactive_users",
+        "schedule": crontab(hour=3, minute=0),
+    },
+}
