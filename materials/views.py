@@ -1,5 +1,6 @@
 from typing import Any, cast
 
+from django.db import transaction
 from django.db.models import QuerySet
 from drf_spectacular.utils import OpenApiResponse, extend_schema, extend_schema_view
 from rest_framework import generics, status, viewsets
@@ -16,8 +17,12 @@ from users.permissions import IsModer, IsOwner, is_moder
 
 from .models import Course, Lesson, Subscription
 from .paginators import CoursePagination, LessonPagination
-from .serializers import (CourseSerializer, LessonSerializer, SubscriptionRequestSerializer,
-                          SubscriptionResponseSerializer)
+from .serializers import (
+    CourseSerializer,
+    LessonSerializer,
+    SubscriptionRequestSerializer,
+    SubscriptionResponseSerializer,
+)
 from .services import should_notify
 from .tasks import send_course_update_email
 
@@ -180,8 +185,10 @@ class LessonUpdateAPIView(generics.UpdateAPIView):
         previous_update = course.updated_at
         serializer.save()
         course.save(update_fields=["updated_at"])
+
         if should_notify(previous_update):
-            send_course_update_email.delay(course.id)
+            # Оборот
+            transaction.on_commit(lambda: send_course_update_email.delay(course.id))
 
 
 @extend_schema_view(
