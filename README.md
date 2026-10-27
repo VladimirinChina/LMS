@@ -21,7 +21,8 @@
 - Python 3.14
 - Django, Django REST Framework
 - Pillow (работа с изображениями)
-- SQLite
+- PostgreSQL
+- Docker и Docker Compose
 - Poetry (управление зависимостями)
 - black, flake8, mypy (django-stubs)
 - djangorestframework-simplejwt (JWT-авторизация)
@@ -33,75 +34,109 @@
 
 ## Установка и запуск
 
-1. Клонировать репозиторий и перейти в папку проекта.
-2. Установить зависимости:
+## Запуск через Docker Compose (рекомендуется)
 
-```bash
-   poetry install
-```
+Одной командой поднимаются все части проекта: приложение, база данных PostgreSQL, Redis, воркер Celery и планировщик celery-beat.
 
-3. Создать файл `.env` на основе `.env.example` и указать свой `SECRET_KEY`:
+### Требования
 
-- `SECRET_KEY` — секретный ключ Django;
-- `DEBUG` — `True` или `False`;
-- `STRIPE_API_KEY` — секретный тестовый ключ Stripe (`sk_test_...`, раздел Developers → API keys в личном кабинете Stripe);
-- `STRIPE_CURRENCY` — валюта платежей (по умолчанию `rub`, если Stripe не принимает её для аккаунта, укажите `usd`).
-- `CELERY_BROKER_URL` — адрес брокера Redis (по умолчанию `redis://localhost:6379/0`);
-- `CELERY_RESULT_BACKEND` — адрес хранилища результатов задач (по умолчанию `redis://localhost:6379/0`);
-- `EMAIL_BACKEND` — бэкенд отправки почты (по умолчанию консольный: письма печатаются в терминале воркера). Для реальной отправки укажите `django.core.mail.backends.smtp.EmailBackend` и заполните `EMAIL_HOST`, `EMAIL_PORT`, `EMAIL_HOST_USER`, `EMAIL_HOST_PASSWORD`, `EMAIL_USE_TLS`;
-- `DEFAULT_FROM_EMAIL` — адрес отправителя писем.
+- Docker Desktop (или Docker Engine с плагином Compose), он должен быть запущен.
 
-```bash
-   cp .env.example .env
-```
+### Первый запуск
 
-4. Применить миграции:
-
-```bash
-   poetry run python manage.py migrate
-```
-
-5. Загрузить группу модераторов:
-
-```bash
-   poetry run python manage.py loaddata groups
-```
-
-6. (Опционально) Заполнить таблицу платежей тестовыми данными:
-
-```bash
-   poetry run python manage.py fill_payments
-```
-
-7. Создать суперпользователя (вход по email):
-
-```bash
-   poetry run python manage.py createsuperuser
-```
-
-8. Запустить сервер:
-
-```bash
-   poetry run python manage.py runserver
-```
-9. Установить и запустить Redis (macOS):
+1. Склонировать репозиторий и перейти в папку проекта.
+2. Создать файл `.env` из примера и заполнить его своими значениями:
 
    ```bash
-   brew install redis
-   brew services start redis
-   redis-cli ping   # должен ответить PONG
+   cp .env.example .env
    ```
 
-10. В отдельных терминалах запустить воркер Celery и планировщик celery-beat:
+   Переменные:
+
+   - `SECRET_KEY` — секретный ключ Django (в одинарных кавычках). Сгенерировать: `python -c "from django.core.management.utils import get_random_secret_key as g; print(g())"`;
+   - `DEBUG` — `True` или `False`;
+   - `POSTGRES_DB`, `POSTGRES_USER`, `POSTGRES_PASSWORD` — имя базы, пользователь и пароль PostgreSQL (придумайте свои, база создаётся с ними при первом запуске);
+   - `POSTGRES_HOST`, `POSTGRES_PORT` — адрес базы при запуске без Docker (`localhost`, `5432`); внутри Compose хост подменяется на `db` автоматически;
+   - `CELERY_BROKER_URL`, `CELERY_RESULT_BACKEND` — адреса Redis (внутри Compose подменяются на `redis`);
+   - `EMAIL_BACKEND`, `DEFAULT_FROM_EMAIL` — настройки почты (по умолчанию письма печатаются в логах воркера; для реальной отправки укажите SMTP-бэкенд и `EMAIL_HOST`, `EMAIL_PORT`, `EMAIL_HOST_USER`, `EMAIL_HOST_PASSWORD`, `EMAIL_USE_TLS`);
+   - `STRIPE_API_KEY` — тестовый секретный ключ Stripe (`sk_test_...`), `STRIPE_CURRENCY` — валюта платежей.
+
+3. Собрать образ и запустить все сервисы:
+
+   ```bash
+   docker compose up --build
+   ```
+
+   (флаг `-d` запускает контейнеры в фоне: `docker compose up -d --build`). Миграции и загрузка группы модераторов выполняются автоматически при старте приложения.
+
+4. Создать суперпользователя (в другом окне терминала):
+
+   ```bash
+   docker compose exec app python manage.py createsuperuser
+   ```
+
+### Сервисы
+
+| Сервис | Назначение | Доступ |
+|---|---|---|
+| `app` | Django-приложение (API) | http://127.0.0.1:8000 |
+| `db` | PostgreSQL 17 | `localhost:5432` (только с вашего компьютера, например для pgAdmin) |
+| `redis` | брокер сообщений Celery | только внутри сети Compose (`expose`) |
+| `celery_worker` | выполнение фоновых задач | — |
+| `celery_beat` | периодические задачи | — |
+
+Адреса приложения:
+
+- API и админка: http://127.0.0.1:8000/admin/
+- Swagger UI: http://127.0.0.1:8000/api/docs/swagger/
+- ReDoc: http://127.0.0.1:8000/api/docs/redoc/
+
+### Сохранность данных
+
+Данные хранятся в именованных томах Docker: `postgres_data` (база), `redis_data` (Redis), `media_data` (загруженные файлы). Они сохраняются при остановке и пересоздании контейнеров.
+
+### Полезные команды
+
+```bash
+docker compose ps                        # состояние сервисов
+docker compose logs -f app               # логи приложения (аналогично celery_worker, celery_beat, db)
+docker compose exec app python manage.py test   # запуск тестов в контейнере
+docker compose down                      # остановить и удалить контейнеры (данные сохраняются)
+docker compose down -v                   # то же, но вместе с данными (чистая база)
+```
+
+Если после смены `POSTGRES_PASSWORD` в `.env` приложение не подключается к базе, выполните `docker compose down -v` и запустите заново (пароль применяется только при создании базы).
+
+### Подключение к базе через pgAdmin
+
+В pgAdmin: Servers → Register → Server. На вкладке Connection: Host `localhost`, Port `5432`, Maintenance database, Username и Password из `.env` (`POSTGRES_DB`, `POSTGRES_USER`, `POSTGRES_PASSWORD`). Порт 5432 на компьютере не должен быть занят другой установленной PostgreSQL.
+
+## Запуск без Docker
+
+Нужны Python 3.14, Poetry, запущенные локально PostgreSQL и Redis.
+
+1. `poetry install`
+2. Создать `.env` из `.env.example` (`POSTGRES_HOST=localhost`, адреса Redis с `localhost`).
+3. Применить миграции и загрузить группу модераторов:
+
+   ```bash
+   poetry run python manage.py migrate
+   poetry run python manage.py loaddata groups
+   ```
+
+4. Создать суперпользователя и запустить сервер:
+
+   ```bash
+   poetry run python manage.py createsuperuser
+   poetry run python manage.py runserver
+   ```
+
+5. В отдельных терминалах запустить воркер и планировщик:
 
    ```bash
    poetry run celery -A config worker -l info -P solo
    poetry run celery -A config beat -l info
    ```
-
-   Режим `-P solo` для воркера рекомендуется при локальной разработке на macOS.
-
-Сервер будет доступен по адресу http://127.0.0.1:8000/, админка: http://127.0.0.1:8000/admin/.
 
 ## Авторизация
 
