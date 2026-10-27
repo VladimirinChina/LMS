@@ -219,4 +219,7 @@ __marimo__/
 .DS_Store
 
 # User-uploaded media files
-media/
+media
+schema.yml
+
+celerybeat-schedule*
