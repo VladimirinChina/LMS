@@ -334,6 +334,125 @@ Celery настроен в `config/celery.py`, брокер и хранилищ�
 poetry run python manage.py shell -c "from users.tasks import block_inactive_users; print(block_inactive_users.delay().get(timeout=10))"
 ```
 
+## Деплой на удалённый сервер (CI/CD)
+
+Приложение разворачивается на сервере через Docker Compose. Схема: `nginx` (единственный открытый порт 80) → `gunicorn` (приложение), рядом работают PostgreSQL, Redis, воркер Celery и celery-beat. Конфигурация лежит в `docker-compose.prod.yaml` и `deploy/nginx/default.conf`, пайплайн в `.github/workflows/ci-cd.yaml`.
+
+### Требования к серверу
+
+Ubuntu LTS (x86_64), от 2 ГБ памяти и 10 ГБ диска, публичный IP-адрес, доступны порты 22, 80, 443.
+
+### Подготовка сервера (один раз)
+
+1. **SSH-ключ** на вашем компьютере (без пароля, для GitHub Actions):
+
+   ```bash
+   ssh-keygen -t ed25519 -C "lms-deploy" -f ~/.ssh/lms_deploy -N ""
+   ```
+
+2. **Пользователь `deploy`** (под `root` на сервере):
+
+   ```bash
+   adduser --disabled-password --gecos "" deploy
+   usermod -aG sudo deploy
+   echo "deploy ALL=(ALL) NOPASSWD:ALL" > /etc/sudoers.d/deploy
+   mkdir -p /home/deploy/.ssh
+   ```
+
+   Добавьте публичный ключ (`~/.ssh/lms_deploy.pub`) в файл `/home/deploy/.ssh/authorized_keys` и выдайте права:
+
+   ```bash
+   chown -R deploy:deploy /home/deploy/.ssh
+   chmod 700 /home/deploy/.ssh
+   chmod 600 /home/deploy/.ssh/authorized_keys
+   ```
+
+   Проверьте вход: `ssh -i ~/.ssh/lms_deploy deploy@IP_СЕРВЕРА`.
+
+3. **Защита SSH** (под `deploy`; перед закрытием окна проверьте вход во втором окне):
+
+   ```bash
+   sudo tee /etc/ssh/sshd_config.d/00-hardening.conf > /dev/null <<'EOF'
+   PasswordAuthentication no
+   PermitRootLogin no
+   PubkeyAuthentication yes
+   EOF
+   sudo sshd -t && sudo systemctl reload ssh
+   ```
+
+4. **Файрвол** (открыты только SSH, HTTP и HTTPS):
+
+   ```bash
+   sudo apt update && sudo apt install -y ufw
+   sudo ufw default deny incoming
+   sudo ufw default allow outgoing
+   sudo ufw allow OpenSSH
+   sudo ufw allow 80/tcp
+   sudo ufw allow 443/tcp
+   sudo ufw enable
+   ```
+
+5. **Docker**:
+
+   ```bash
+   curl -fsSL https://get.docker.com | sudo sh
+   sudo usermod -aG docker deploy
+   ```
+
+   Перезайдите на сервер и проверьте `docker compose version`.
+
+База данных и Redis наружу не публикуются (доступны только внутри сети Compose), в интернет открыт только nginx.
+
+### Секреты GitHub
+
+Repository → Settings → Secrets and variables → Actions:
+
+| Секрет | Значение |
+|---|---|
+| `SSH_HOST` | IP-адрес или домен сервера |
+| `SSH_PORT` | порт SSH (`22`) |
+| `SSH_USER` | `deploy` |
+| `SSH_PRIVATE_KEY` | приватный ключ целиком (`pbcopy < ~/.ssh/lms_deploy`) |
+| `SSH_KNOWN_HOSTS` | вывод `ssh-keyscan -p 22 -t ed25519 IP_СЕРВЕРА` |
+| `PROD_ENV` | содержимое боевого `.env` (см. ниже) |
+
+Боевой `.env` формируется на основе `.env.template`. Обязательно задать `SECRET_KEY` (длинный случайный), `DEBUG=False`, `ALLOWED_HOSTS` (IP или домен сервера), `CSRF_TRUSTED_ORIGINS` (например `http://IP_СЕРВЕРА`), `POSTGRES_DB`, `POSTGRES_USER`, `POSTGRES_PASSWORD`; при необходимости почтовые настройки и `STRIPE_API_KEY`. Реальные значения в репозиторий не попадают: секреты хранятся только в GitHub, файл `.env` создаётся на сервере при деплое.
+
+### Как работает пайплайн
+
+Workflow запускается при каждом `push` и при pull request в `main`. Этапы идут строго друг за другом, ошибка на любом останавливает остальные:
+
+1. **Tests** — тесты на Python 3.14 с PostgreSQL (`coverage`);
+2. **Lint** — `black --check`, `flake8`, `mypy`;
+3. **Build image** — сборка Docker-образа и публикация в GitHub Container Registry (только из `main`);
+4. **Deploy** — по SSH на сервер копируются `docker-compose.prod.yaml` и конфиг nginx, создаётся `.env` из секрета, скачивается новый образ и перезапускаются сервисы, после чего проверяется, что сайт отвечает.
+
+### После первого деплоя
+
+Создайте суперпользователя:
+
+```bash
+ssh -i ~/.ssh/lms_deploy deploy@IP_СЕРВЕРА
+cd lms
+docker compose -f docker-compose.prod.yaml exec app python manage.py createsuperuser
+```
+
+Проверка: `http://IP_СЕРВЕРА/api/docs/swagger/` (документация), `http://IP_СЕРВЕРА/admin/` (админка).
+
+### Полезные команды на сервере (папка `~/lms`)
+
+```bash
+docker compose -f docker-compose.prod.yaml ps                      # состояние сервисов
+docker compose -f docker-compose.prod.yaml logs -f app             # логи приложения
+docker compose -f docker-compose.prod.yaml logs -f celery_worker   # логи воркера
+```
+
+Автоперезапуск: контейнеры запущены с `restart: unless-stopped`, а Docker стартует вместе с системой, поэтому после перезагрузки сервера сайт поднимается сам.
+
+### Откат на предыдущую версию
+
+Образы имеют тег с хэшем коммита. На сервере в `~/lms/.env` замените значение `APP_IMAGE` на тег предыдущего образа (`ghcr.io/ВЛАДЕЛЕЦ/РЕПОЗИТОРИЙ:ХЭШ_КОММИТА`) и выполните `docker compose -f docker-compose.prod.yaml up -d`. Следующий деплой снова обновит версию.
+
 ## Тесты и покрытие
 
 ```bash
