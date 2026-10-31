@@ -31,7 +31,8 @@ SECRET_KEY = os.environ["SECRET_KEY"]
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = os.environ["DEBUG"] == "True"
 
-ALLOWED_HOSTS: list[str] = []
+ALLOWED_HOSTS: list[str] = [host for host in os.getenv("ALLOWED_HOSTS", "127.0.0.1,localhost").split(",") if host]
+CSRF_TRUSTED_ORIGINS: list[str] = [origin for origin in os.getenv("CSRF_TRUSTED_ORIGINS", "").split(",") if origin]
 
 
 # Application definition
@@ -136,6 +137,7 @@ USE_TZ = True
 # https://docs.djangoproject.com/en/6.1/howto/static-files/
 
 STATIC_URL = "static/"
+STATIC_ROOT = BASE_DIR / "staticfiles"
 
 
 # Почта (настройка MAILERS, Django 6.1+)

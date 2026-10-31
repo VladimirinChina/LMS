@@ -1,0 +1,171 @@
+name: CI/CD
+
+on:
+  push:
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+env:
+  # тестовые значения только для CI, не секретные
+  SECRET_KEY: ci-only-secret-key-not-used-anywhere-else-0123456789abcdef
+  DEBUG: "False"
+  POSTGRES_DB: lms
+  POSTGRES_USER: lms_user
+  POSTGRES_PASSWORD: ci-password
+  POSTGRES_HOST: localhost
+  POSTGRES_PORT: "5432"
+
+jobs:
+  test:
+    name: Tests
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_DB: lms
+          POSTGRES_USER: lms_user
+          POSTGRES_PASSWORD: ci-password
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U lms_user -d lms"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    steps:
+      - uses: actions/checkout@v7
+      - name: Install Poetry
+        run: pipx install poetry
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.14"
+          cache: poetry
+      - name: Install dependencies
+        run: |
+          poetry env use "$(which python)"
+          poetry install --no-interaction
+      - name: Run tests with coverage
+        run: |
+          poetry run coverage run manage.py test
+          poetry run coverage report
+
+  lint:
+    name: Lint
+    needs: test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: Install Poetry
+        run: pipx install poetry
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.14"
+          cache: poetry
+      - name: Install dependencies
+        run: |
+          poetry env use "$(which python)"
+          poetry install --no-interaction
+      - name: black
+        run: poetry run black --check .
+      - name: flake8
+        run: poetry run flake8
+      - name: mypy
+        run: poetry run mypy .
+
+  build:
+    name: Build image
+    needs: lint
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    outputs:
+      image: ${{ steps.meta.outputs.image }}
+    steps:
+      - uses: actions/checkout@v7
+      - name: Image name
+        id: meta
+        run: echo "image=ghcr.io/${GITHUB_REPOSITORY,,}:${GITHUB_SHA}" >> "$GITHUB_OUTPUT"
+      - uses: docker/setup-buildx-action@v4
+      - name: Log in to GHCR
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Build (and push on deploy branches)
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          push: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
+          tags: ${{ steps.meta.outputs.image }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  deploy:
+    name: Deploy
+    needs: build
+    # деплой только из main
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: read
+    concurrency:
+      group: production-deploy
+      cancel-in-progress: false
+    env:
+      SSH_HOST: ${{ secrets.SSH_HOST }}
+      SSH_USER: ${{ secrets.SSH_USER }}
+      SSH_PORT: ${{ secrets.SSH_PORT }}
+      IMAGE: ${{ needs.build.outputs.image }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Configure SSH
+        env:
+          SSH_PRIVATE_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
+          SSH_KNOWN_HOSTS: ${{ secrets.SSH_KNOWN_HOSTS }}
+        run: |
+          install -m 700 -d ~/.ssh
+          printf '%s\n' "$SSH_PRIVATE_KEY" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          printf '%s\n' "$SSH_KNOWN_HOSTS" > ~/.ssh/known_hosts
+          cat >> ~/.ssh/config <<EOF
+          Host deploy-server
+            HostName ${SSH_HOST}
+            User ${SSH_USER}
+            Port ${SSH_PORT}
+            IdentityFile ~/.ssh/deploy_key
+            IdentitiesOnly yes
+          EOF
+
+      - name: Upload deploy files
+        run: |
+          ssh deploy-server "mkdir -p lms/deploy/nginx"
+          scp docker-compose.prod.yaml deploy-server:lms/docker-compose.prod.yaml
+          scp deploy/nginx/default.conf deploy-server:lms/deploy/nginx/default.conf
+
+      - name: Write .env on server
+        env:
+          PROD_ENV: ${{ secrets.PROD_ENV }}
+        run: |
+          { printf '%s\n' "$PROD_ENV"; printf 'APP_IMAGE=%s\n' "$IMAGE"; } \
+            | ssh deploy-server "umask 077 && cat > lms/.env"
+
+      - name: Pull image and restart services
+        env:
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GHCR_USER: ${{ github.actor }}
+        run: |
+          printf '%s' "$GHCR_TOKEN" | ssh deploy-server "docker login ghcr.io -u '$GHCR_USER' --password-stdin"
+          ssh deploy-server "cd lms && docker compose -f docker-compose.prod.yaml pull && docker compose -f docker-compose.prod.yaml up -d --remove-orphans && docker compose -f docker-compose.prod.yaml exec -T nginx nginx -s reload && docker image prune -af"
+
+      - name: Smoke test
+        run: |
+          curl -fsS --retry 20 --retry-delay 5 --retry-connrefused "http://${SSH_HOST}/admin/login/" -o /dev/null
