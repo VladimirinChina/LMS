@@ -101,7 +101,7 @@ class CourseViewSet(viewsets.ModelViewSet):
         previous_update = cast(Course, serializer.instance).updated_at
         course = serializer.save()
         if should_notify(previous_update):
-            send_course_update_email.delay(course.id)
+            transaction.on_commit(lambda: send_course_update_email.delay(course.id))
 
 
 @extend_schema_view(

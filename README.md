@@ -14,14 +14,15 @@
 - Подписка на обновления курса, признак подписки `is_subscribed` в данных курса.
 - Пагинация списков курсов и уроков.
 
-На данном этапе авторизация и права доступа не используются: все эндпоинты открыты.
+Все эндпоинты, кроме регистрации и получения токенов, требуют JWT. Права доступа зависят от владельца объекта и группы модераторов.
 
 ## Технологии
 
 - Python 3.14
 - Django, Django REST Framework
 - Pillow (работа с изображениями)
-- SQLite
+- PostgreSQL
+- Docker и Docker Compose
 - Poetry (управление зависимостями)
 - black, flake8, mypy (django-stubs)
 - djangorestframework-simplejwt (JWT-авторизация)
@@ -33,75 +34,109 @@
 
 ## Установка и запуск
 
-1. Клонировать репозиторий и перейти в папку проекта.
-2. Установить зависимости:
+## Запуск через Docker Compose (рекомендуется)
 
-```bash
-   poetry install
-```
+Одной командой поднимаются все части проекта: приложение, база данных PostgreSQL, Redis, воркер Celery и планировщик celery-beat.
 
-3. Создать файл `.env` на основе `.env.example` и указать свой `SECRET_KEY`:
+### Требования
 
-- `SECRET_KEY` — секретный ключ Django;
-- `DEBUG` — `True` или `False`;
-- `STRIPE_API_KEY` — секретный тестовый ключ Stripe (`sk_test_...`, раздел Developers → API keys в личном кабинете Stripe);
-- `STRIPE_CURRENCY` — валюта платежей (по умолчанию `rub`, если Stripe не принимает её для аккаунта, укажите `usd`).
-- `CELERY_BROKER_URL` — адрес брокера Redis (по умолчанию `redis://localhost:6379/0`);
-- `CELERY_RESULT_BACKEND` — адрес хранилища результатов задач (по умолчанию `redis://localhost:6379/0`);
-- `EMAIL_BACKEND` — бэкенд отправки почты (по умолчанию консольный: письма печатаются в терминале воркера). Для реальной отправки укажите `django.core.mail.backends.smtp.EmailBackend` и заполните `EMAIL_HOST`, `EMAIL_PORT`, `EMAIL_HOST_USER`, `EMAIL_HOST_PASSWORD`, `EMAIL_USE_TLS`;
-- `DEFAULT_FROM_EMAIL` — адрес отправителя писем.
+- Docker Desktop (или Docker Engine с плагином Compose), он должен быть запущен.
 
-```bash
-   cp .env.example .env
-```
+### Первый запуск
 
-4. Применить миграции:
-
-```bash
-   poetry run python manage.py migrate
-```
-
-5. Загрузить группу модераторов:
-
-```bash
-   poetry run python manage.py loaddata groups
-```
-
-6. (Опционально) Заполнить таблицу платежей тестовыми данными:
-
-```bash
-   poetry run python manage.py fill_payments
-```
-
-7. Создать суперпользователя (вход по email):
-
-```bash
-   poetry run python manage.py createsuperuser
-```
-
-8. Запустить сервер:
-
-```bash
-   poetry run python manage.py runserver
-```
-9. Установить и запустить Redis (macOS):
+1. Склонировать репозиторий и перейти в папку проекта.
+2. Создать файл `.env` из примера и заполнить его своими значениями:
 
    ```bash
-   brew install redis
-   brew services start redis
-   redis-cli ping   # должен ответить PONG
+   cp .env.template .env
    ```
 
-10. В отдельных терминалах запустить воркер Celery и планировщик celery-beat:
+   Переменные:
+
+   - `SECRET_KEY` — секретный ключ Django (в одинарных кавычках). Сгенерировать: `python -c "from django.core.management.utils import get_random_secret_key as g; print(g())"`;
+   - `DEBUG` — `True` или `False`;
+   - `POSTGRES_DB`, `POSTGRES_USER`, `POSTGRES_PASSWORD` — имя базы, пользователь и пароль PostgreSQL (придумайте свои, база создаётся с ними при первом запуске);
+   - `POSTGRES_HOST`, `POSTGRES_PORT` — адрес базы при запуске без Docker (`localhost`, `5432`); внутри Compose хост подменяется на `db` автоматически;
+   - `CELERY_BROKER_URL`, `CELERY_RESULT_BACKEND` — адреса Redis (внутри Compose подменяются на `redis`);
+   - `EMAIL_BACKEND`, `DEFAULT_FROM_EMAIL` — настройки почты (по умолчанию письма печатаются в логах воркера; для реальной отправки укажите SMTP-бэкенд и `EMAIL_HOST`, `EMAIL_PORT`, `EMAIL_HOST_USER`, `EMAIL_HOST_PASSWORD`, `EMAIL_USE_TLS`);
+   - `STRIPE_API_KEY` — тестовый секретный ключ Stripe (`sk_test_...`), `STRIPE_CURRENCY` — валюта платежей.
+
+3. Собрать образ и запустить все сервисы:
+
+   ```bash
+   docker compose up --build
+   ```
+
+   (флаг `-d` запускает контейнеры в фоне: `docker compose up -d --build`). Миграции и загрузка группы модераторов выполняются автоматически при старте приложения.
+
+4. Создать суперпользователя (в другом окне терминала):
+
+   ```bash
+   docker compose exec app python manage.py createsuperuser
+   ```
+
+### Сервисы
+
+| Сервис | Назначение | Доступ |
+|---|---|---|
+| `app` | Django-приложение (API) | http://127.0.0.1:8000 |
+| `db` | PostgreSQL 17 | `localhost:5432` (только с вашего компьютера, например для pgAdmin) |
+| `redis` | брокер сообщений Celery | только внутри сети Compose (`expose`) |
+| `celery_worker` | выполнение фоновых задач | — |
+| `celery_beat` | периодические задачи | — |
+
+Адреса приложения:
+
+- API и админка: http://127.0.0.1:8000/admin/
+- Swagger UI: http://127.0.0.1:8000/api/docs/swagger/
+- ReDoc: http://127.0.0.1:8000/api/docs/redoc/
+
+### Сохранность данных
+
+Данные хранятся в именованных томах Docker: `postgres_data` (база), `redis_data` (Redis), `media_data` (загруженные файлы). Они сохраняются при остановке и пересоздании контейнеров.
+
+### Полезные команды
+
+```bash
+docker compose ps                        # состояние сервисов
+docker compose logs -f app               # логи приложения (аналогично celery_worker, celery_beat, db)
+docker compose exec app python manage.py test   # запуск тестов в контейнере
+docker compose down                      # остановить и удалить контейнеры (данные сохраняются)
+docker compose down -v                   # то же, но вместе с данными (чистая база)
+```
+
+Если после смены `POSTGRES_PASSWORD` в `.env` приложение не подключается к базе, выполните `docker compose down -v` и запустите заново (пароль применяется только при создании базы).
+
+### Подключение к базе через pgAdmin
+
+В pgAdmin: Servers → Register → Server. На вкладке Connection: Host `localhost`, Port `5432`, Maintenance database, Username и Password из `.env` (`POSTGRES_DB`, `POSTGRES_USER`, `POSTGRES_PASSWORD`). Порт 5432 на компьютере не должен быть занят другой установленной PostgreSQL.
+
+## Запуск без Docker
+
+Нужны Python 3.14, Poetry, запущенные локально PostgreSQL и Redis.
+
+1. `poetry install`
+2. Создать `.env` из `.env.example` (`POSTGRES_HOST=localhost`, адреса Redis с `localhost`).
+3. Применить миграции и загрузить группу модераторов:
+
+   ```bash
+   poetry run python manage.py migrate
+   poetry run python manage.py loaddata groups
+   ```
+
+4. Создать суперпользователя и запустить сервер:
+
+   ```bash
+   poetry run python manage.py createsuperuser
+   poetry run python manage.py runserver
+   ```
+
+5. В отдельных терминалах запустить воркер и планировщик:
 
    ```bash
    poetry run celery -A config worker -l info -P solo
    poetry run celery -A config beat -l info
    ```
-
-   Режим `-P solo` для воркера рекомендуется при локальной разработке на macOS.
-
-Сервер будет доступен по адресу http://127.0.0.1:8000/, админка: http://127.0.0.1:8000/admin/.
 
 ## Авторизация
 
@@ -280,7 +315,7 @@ Celery настроен в `config/celery.py`, брокер и хранилищ�
 
 ### Рассылка об обновлении курса
 
-Задача `materials.tasks.send_course_update_email` отправляет письмо каждому активному подписчику курса. Она вызывается из контроллеров после успешного обновления:
+Задача `materials.tasks.send_course_update_email` отправляет письмо каждому активному подписчику курса. Контроллеры ставят её в очередь через `transaction.on_commit` после успешного сохранения:
 
 - при обновлении курса (`PUT`/`PATCH /courses/<id>/`);
 - при обновлении любого урока курса (`PUT`/`PATCH /lessons/<id>/update/`), урок считается частью курса.
@@ -298,6 +333,125 @@ Celery настроен в `config/celery.py`, брокер и хранилищ�
 ```bash
 poetry run python manage.py shell -c "from users.tasks import block_inactive_users; print(block_inactive_users.delay().get(timeout=10))"
 ```
+
+## Деплой на удалённый сервер (CI/CD)
+
+Приложение разворачивается на сервере через Docker Compose. Схема: `nginx` (единственный открытый порт 80) → `gunicorn` (приложение), рядом работают PostgreSQL, Redis, воркер Celery и celery-beat. Конфигурация лежит в `docker-compose.prod.yaml` и `deploy/nginx/default.conf`, пайплайн в `.github/workflows/ci-cd.yaml`.
+
+### Требования к серверу
+
+Ubuntu LTS (x86_64), от 2 ГБ памяти и 10 ГБ диска, публичный IP-адрес, доступны порты 22, 80, 443.
+
+### Подготовка сервера (один раз)
+
+1. **SSH-ключ** на вашем компьютере (без пароля, для GitHub Actions):
+
+   ```bash
+   ssh-keygen -t ed25519 -C "lms-deploy" -f ~/.ssh/lms_deploy -N ""
+   ```
+
+2. **Пользователь `deploy`** (под `root` на сервере):
+
+   ```bash
+   adduser --disabled-password --gecos "" deploy
+   usermod -aG sudo deploy
+   echo "deploy ALL=(ALL) NOPASSWD:ALL" > /etc/sudoers.d/deploy
+   mkdir -p /home/deploy/.ssh
+   ```
+
+   Добавьте публичный ключ (`~/.ssh/lms_deploy.pub`) в файл `/home/deploy/.ssh/authorized_keys` и выдайте права:
+
+   ```bash
+   chown -R deploy:deploy /home/deploy/.ssh
+   chmod 700 /home/deploy/.ssh
+   chmod 600 /home/deploy/.ssh/authorized_keys
+   ```
+
+   Проверьте вход: `ssh -i ~/.ssh/lms_deploy deploy@IP_СЕРВЕРА`.
+
+3. **Защита SSH** (под `deploy`; перед закрытием окна проверьте вход во втором окне):
+
+   ```bash
+   sudo tee /etc/ssh/sshd_config.d/00-hardening.conf > /dev/null <<'EOF'
+   PasswordAuthentication no
+   PermitRootLogin no
+   PubkeyAuthentication yes
+   EOF
+   sudo sshd -t && sudo systemctl reload ssh
+   ```
+
+4. **Файрвол** (открыты только SSH, HTTP и HTTPS):
+
+   ```bash
+   sudo apt update && sudo apt install -y ufw
+   sudo ufw default deny incoming
+   sudo ufw default allow outgoing
+   sudo ufw allow OpenSSH
+   sudo ufw allow 80/tcp
+   sudo ufw allow 443/tcp
+   sudo ufw enable
+   ```
+
+5. **Docker**:
+
+   ```bash
+   curl -fsSL https://get.docker.com | sudo sh
+   sudo usermod -aG docker deploy
+   ```
+
+   Перезайдите на сервер и проверьте `docker compose version`.
+
+База данных и Redis наружу не публикуются (доступны только внутри сети Compose), в интернет открыт только nginx.
+
+### Секреты GitHub
+
+Repository → Settings → Secrets and variables → Actions:
+
+| Секрет | Значение |
+|---|---|
+| `SSH_HOST` | IP-адрес или домен сервера |
+| `SSH_PORT` | порт SSH (`22`) |
+| `SSH_USER` | `deploy` |
+| `SSH_PRIVATE_KEY` | приватный ключ целиком (`pbcopy < ~/.ssh/lms_deploy`) |
+| `SSH_KNOWN_HOSTS` | вывод `ssh-keyscan -p 22 -t ed25519 IP_СЕРВЕРА` |
+| `PROD_ENV` | содержимое боевого `.env` (см. ниже) |
+
+Боевой `.env` формируется на основе `.env.template`. Обязательно задать `SECRET_KEY` (длинный случайный), `DEBUG=False`, `ALLOWED_HOSTS` (IP или домен сервера), `CSRF_TRUSTED_ORIGINS` (например `http://IP_СЕРВЕРА`), `POSTGRES_DB`, `POSTGRES_USER`, `POSTGRES_PASSWORD`; при необходимости почтовые настройки и `STRIPE_API_KEY`. Реальные значения в репозиторий не попадают: секреты хранятся только в GitHub, файл `.env` создаётся на сервере при деплое.
+
+### Как работает пайплайн
+
+Workflow запускается при каждом `push` и при pull request в `main`. Этапы идут строго друг за другом, ошибка на любом останавливает остальные:
+
+1. **Tests** — тесты на Python 3.14 с PostgreSQL (`coverage`);
+2. **Lint** — `black --check`, `flake8`, `mypy`;
+3. **Build image** — сборка Docker-образа и публикация в GitHub Container Registry (только из `main`);
+4. **Deploy** — по SSH на сервер копируются `docker-compose.prod.yaml` и конфиг nginx, создаётся `.env` из секрета, скачивается новый образ и перезапускаются сервисы, после чего проверяется, что сайт отвечает.
+
+### После первого деплоя
+
+Создайте суперпользователя:
+
+```bash
+ssh -i ~/.ssh/lms_deploy deploy@IP_СЕРВЕРА
+cd lms
+docker compose -f docker-compose.prod.yaml exec app python manage.py createsuperuser
+```
+
+Проверка: `http://IP_СЕРВЕРА/api/docs/swagger/` (документация), `http://IP_СЕРВЕРА/admin/` (админка).
+
+### Полезные команды на сервере (папка `~/lms`)
+
+```bash
+docker compose -f docker-compose.prod.yaml ps                      # состояние сервисов
+docker compose -f docker-compose.prod.yaml logs -f app             # логи приложения
+docker compose -f docker-compose.prod.yaml logs -f celery_worker   # логи воркера
+```
+
+Автоперезапуск: контейнеры запущены с `restart: unless-stopped`, а Docker стартует вместе с системой, поэтому после перезагрузки сервера сайт поднимается сам.
+
+### Откат на предыдущую версию
+
+Образы имеют тег с хэшем коммита. На сервере в `~/lms/.env` замените значение `APP_IMAGE` на тег предыдущего образа (`ghcr.io/ВЛАДЕЛЕЦ/РЕПОЗИТОРИЙ:ХЭШ_КОММИТА`) и выполните `docker compose -f docker-compose.prod.yaml up -d`. Следующий деплой снова обновит версию.
 
 ## Тесты и покрытие
 

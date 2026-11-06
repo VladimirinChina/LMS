@@ -223,3 +223,5 @@ media
 schema.yml
 
 celerybeat-schedule*
+
+staticfiles/
