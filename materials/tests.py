@@ -326,7 +326,8 @@ class CourseTestCase(BaseTestCase):
             self.client.force_authenticate(user=self.owner)
             url = reverse("materials:courses-detail", args=[self.course.id])
 
-            response = self.client.patch(url, {"title": "Новое название"})
+            with self.captureOnCommitCallbacks(execute=True):
+                response = self.client.patch(url, {"title": "Новое название"})
 
             self.assertEqual(response.status_code, status.HTTP_200_OK)
             self.mock_delay.assert_called_once_with(self.course.id)
@@ -345,8 +346,9 @@ class CourseTestCase(BaseTestCase):
             self.client.force_authenticate(user=self.owner)
             url = reverse("materials:courses-detail", args=[self.course.id])
 
-            self.client.patch(url, {"title": "Первое"})
-            self.client.patch(url, {"title": "Второе"})
+            with self.captureOnCommitCallbacks(execute=True):
+                self.client.patch(url, {"title": "Первое"})
+                self.client.patch(url, {"title": "Второе"})
 
             self.assertEqual(self.mock_delay.call_count, 1)
 
@@ -365,7 +367,8 @@ class CourseTestCase(BaseTestCase):
             self.client.force_authenticate(user=self.owner)
             url = reverse("materials:lesson-update", args=[self.lesson.id])
 
-            response = self.client.patch(url, {"title": "Новое название урока"})
+            with self.captureOnCommitCallbacks(execute=True):
+                response = self.client.patch(url, {"title": "Новое название урока"})
 
             self.assertEqual(response.status_code, status.HTTP_200_OK)
             self.mock_delay.assert_called_once_with(self.course.id)
